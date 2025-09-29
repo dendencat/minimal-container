@@ -44,6 +44,17 @@ func (rm *RootfsManager) PrepareRootfs() error {
 func (rm *RootfsManager) PivotRoot() error {
 	oldRootPath := filepath.Join(rm.RootfsPath, ".old_root")
 
+	// Bind mount the rootfs onto itself to make it a mount point
+	// This is required for pivot_root to succeed
+	if err := unix.Mount(rm.RootfsPath, rm.RootfsPath, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+		return util.NewError("bind mount rootfs", err)
+	}
+
+	// Make the mount private to prevent propagation
+	if err := unix.Mount("", rm.RootfsPath, "", unix.MS_PRIVATE|unix.MS_REC, ""); err != nil {
+		return util.NewError("make rootfs private", err)
+	}
+
 	// Attempt pivot_root
 	if err := unix.PivotRoot(rm.RootfsPath, oldRootPath); err != nil {
 		return util.NewError("pivot_root", err)

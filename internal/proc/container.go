@@ -1,6 +1,7 @@
 package proc
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -116,10 +117,16 @@ func (cp *ContainerProcess) runWithPIDNamespace(nsConfig *ns.NamespaceConfig) er
 	}
 
 	// Set environment variables for child
+	// Use JSON encoding to preserve argument boundaries
+	argsJSON, err := json.Marshal(cp.Args)
+	if err != nil {
+		return util.NewError("marshal args", err)
+	}
+
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("GOMINI_BUNDLE_DIR=%s", cp.BundleDir),
 		fmt.Sprintf("GOMINI_HOSTNAME=%s", cp.Hostname),
-		fmt.Sprintf("GOMINI_ARGS=%s", joinArgs(cp.Args)),
+		fmt.Sprintf("GOMINI_ARGS=%s", string(argsJSON)),
 		fmt.Sprintf("GOMINI_WORKING_DIR=%s", cp.WorkingDir),
 	)
 
@@ -251,7 +258,11 @@ func HandleContainerInit() error {
 		cp.OverrideHostname(hostname)
 	}
 	if argsStr != "" {
-		cp.OverrideArgs(splitArgs(argsStr))
+		var args []string
+		if err := json.Unmarshal([]byte(argsStr), &args); err != nil {
+			return util.WrapError("unmarshal args", err)
+		}
+		cp.OverrideArgs(args)
 	}
 	if workingDir != "" {
 		cp.WorkingDir = workingDir
@@ -261,41 +272,3 @@ func HandleContainerInit() error {
 	return cp.initContainer()
 }
 
-// joinArgs joins arguments into a single string
-func joinArgs(args []string) string {
-	if len(args) == 0 {
-		return ""
-	}
-
-	result := args[0]
-	for i := 1; i < len(args); i++ {
-		result += " " + args[i]
-	}
-	return result
-}
-
-// splitArgs splits a string into arguments (simple space-based splitting)
-func splitArgs(argsStr string) []string {
-	if argsStr == "" {
-		return nil
-	}
-
-	// Simple space-based splitting - in production, would need proper shell parsing
-	var args []string
-	current := ""
-	for _, char := range argsStr {
-		if char == ' ' {
-			if current != "" {
-				args = append(args, current)
-				current = ""
-			}
-		} else {
-			current += string(char)
-		}
-	}
-	if current != "" {
-		args = append(args, current)
-	}
-
-	return args
-}
