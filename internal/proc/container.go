@@ -1,11 +1,13 @@
 package proc
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"syscall"
 
+	"gomini/internal/cg"
 	"gomini/internal/fs"
 	"gomini/internal/ns"
 	"gomini/internal/spec"
@@ -14,12 +16,14 @@ import (
 
 // ContainerProcess represents a container process configuration
 type ContainerProcess struct {
-	Config     *spec.Config
-	BundleDir  string
-	Hostname   string
-	Args       []string
-	Env        []string
-	WorkingDir string
+	Config        *spec.Config
+	BundleDir     string
+	Hostname      string
+	Args          []string
+	Env           []string
+	WorkingDir    string
+	CgroupManager *cg.CgroupManager
+	ResourceLimits *cg.ResourceLimits
 }
 
 // NewContainerProcess creates a new container process configuration
@@ -46,6 +50,28 @@ func (cp *ContainerProcess) OverrideHostname(hostname string) {
 	if hostname != "" {
 		cp.Hostname = hostname
 	}
+}
+
+// SetupCgroups initializes cgroup management for the container
+func (cp *ContainerProcess) SetupCgroups(containerID string, limits *cg.ResourceLimits) error {
+	cgroupMgr, err := cg.NewCgroupManager(containerID)
+	if err != nil {
+		return util.WrapError("create cgroup manager", err)
+	}
+
+	if err := cgroupMgr.Setup(); err != nil {
+		return util.WrapError("setup cgroup", err)
+	}
+
+	if limits != nil {
+		if err := cgroupMgr.ApplyLimits(limits); err != nil {
+			return util.WrapError("apply cgroup limits", err)
+		}
+	}
+
+	cp.CgroupManager = cgroupMgr
+	cp.ResourceLimits = limits
+	return nil
 }
 
 // Run executes the container process
@@ -91,10 +117,16 @@ func (cp *ContainerProcess) runWithPIDNamespace(nsConfig *ns.NamespaceConfig) er
 	}
 
 	// Set environment variables for child
+	// Use JSON encoding to preserve argument boundaries
+	argsJSON, err := json.Marshal(cp.Args)
+	if err != nil {
+		return util.NewError("marshal args", err)
+	}
+
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("GOMINI_BUNDLE_DIR=%s", cp.BundleDir),
 		fmt.Sprintf("GOMINI_HOSTNAME=%s", cp.Hostname),
-		fmt.Sprintf("GOMINI_ARGS=%s", joinArgs(cp.Args)),
+		fmt.Sprintf("GOMINI_ARGS=%s", string(argsJSON)),
 		fmt.Sprintf("GOMINI_WORKING_DIR=%s", cp.WorkingDir),
 	)
 
@@ -105,9 +137,27 @@ func (cp *ContainerProcess) runWithPIDNamespace(nsConfig *ns.NamespaceConfig) er
 
 	w.Close()
 
+	// Add process to cgroup if configured
+	if cp.CgroupManager != nil {
+		if err := cp.CgroupManager.AddProcess(cmd.Process.Pid); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to add process to cgroup: %v\n", err)
+		}
+	}
+
 	// Wait for child process
 	if err := cmd.Wait(); err != nil {
+		// Clean up cgroup before returning error
+		if cp.CgroupManager != nil {
+			cp.CgroupManager.Cleanup()
+		}
 		return util.NewError("wait for container process", err)
+	}
+
+	// Clean up cgroup after successful completion
+	if cp.CgroupManager != nil {
+		if err := cp.CgroupManager.Cleanup(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to cleanup cgroup: %v\n", err)
+		}
 	}
 
 	return nil
@@ -208,7 +258,11 @@ func HandleContainerInit() error {
 		cp.OverrideHostname(hostname)
 	}
 	if argsStr != "" {
-		cp.OverrideArgs(splitArgs(argsStr))
+		var args []string
+		if err := json.Unmarshal([]byte(argsStr), &args); err != nil {
+			return util.WrapError("unmarshal args", err)
+		}
+		cp.OverrideArgs(args)
 	}
 	if workingDir != "" {
 		cp.WorkingDir = workingDir
@@ -218,41 +272,3 @@ func HandleContainerInit() error {
 	return cp.initContainer()
 }
 
-// joinArgs joins arguments into a single string
-func joinArgs(args []string) string {
-	if len(args) == 0 {
-		return ""
-	}
-
-	result := args[0]
-	for i := 1; i < len(args); i++ {
-		result += " " + args[i]
-	}
-	return result
-}
-
-// splitArgs splits a string into arguments (simple space-based splitting)
-func splitArgs(argsStr string) []string {
-	if argsStr == "" {
-		return nil
-	}
-
-	// Simple space-based splitting - in production, would need proper shell parsing
-	var args []string
-	current := ""
-	for _, char := range argsStr {
-		if char == ' ' {
-			if current != "" {
-				args = append(args, current)
-				current = ""
-			}
-		} else {
-			current += string(char)
-		}
-	}
-	if current != "" {
-		args = append(args, current)
-	}
-
-	return args
-}

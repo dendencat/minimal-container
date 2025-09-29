@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"gomini/internal/cg"
 	"gomini/internal/proc"
 	"gomini/internal/spec"
 )
@@ -133,6 +134,26 @@ func runCommand(args []string) {
 	containerProc.OverrideArgs(finalArgs)
 	if *hostname != "" {
 		containerProc.OverrideHostname(*hostname)
+	}
+
+	// Setup cgroups if resource limits are specified
+	if *cpu > 0 || *mem > 0 || *pids > 0 {
+		limits := &cg.ResourceLimits{
+			CPUQuota:  *cpu,
+			CPUPeriod: 0, // Use default period
+			Memory:    *mem,
+			Pids:      *pids,
+		}
+
+		// Generate container ID (simple timestamp-based ID for now)
+		containerID := fmt.Sprintf("container-%d", os.Getpid())
+
+		if err := containerProc.SetupCgroups(containerID, limits); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to setup cgroups: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Continuing without resource limits...\n")
+		} else {
+			fmt.Printf("Resource limits applied: CPU=%d, Memory=%d, PIDs=%d\n", *cpu, *mem, *pids)
+		}
 	}
 
 	// Run the container
