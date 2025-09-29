@@ -127,6 +127,7 @@ sudo ./bin/gomini run --bundle ./examples/simple-test -- /bin/sh
 ```
 
 #### Resource Limits (Future: M2)
+> **Note:** The following resource limit flags (`--mem`, `--cpu`, `--pids`) are **not yet implemented**. These commands will be available in a future release (M2).
 ```bash
 # Set memory limit to 128MB
 sudo ./bin/gomini run --bundle ./examples/simple-test --mem 134217728
