@@ -1,0 +1,31 @@
+{
+    "ociVersion": "1.0.2",
+    "process": {
+        "terminal": false,
+        "user": {
+            "uid": 0,
+            "gid": 0
+        },
+        "args": [
+            "/bin/echo",
+            "Hello from container!"
+        ],
+        "env": [
+            "PATH=/bin:/usr/bin"
+        ],
+        "cwd": "/"
+    },
+    "root": {
+        "path": "rootfs",
+        "readonly": false
+    },
+    "hostname": "simple-test",
+    "mounts": [],
+    "linux": {
+        "namespaces": [
+            {
+                "type": "uts"
+            }
+        ]
+    }
+}

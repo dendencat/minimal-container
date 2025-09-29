@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"gomini/internal/proc"
 	"gomini/internal/spec"
 )
 
@@ -19,6 +20,12 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		runCommand(os.Args[2:])
+	case "container-init":
+		// Special case: handle container initialization
+		if err := proc.HandleContainerInit(); err != nil {
+			fmt.Fprintf(os.Stderr, "Container init failed: %v\n", err)
+			os.Exit(1)
+		}
 	case "version", "--version", "-v":
 		fmt.Printf("gomini version %s\n", version)
 	case "help", "--help", "-h":
@@ -118,5 +125,20 @@ func runCommand(args []string) {
 	}
 
 	fmt.Printf("Final command to execute: %v\n", finalArgs)
-	fmt.Println("Container runtime not yet implemented")
+
+	// Create container process
+	containerProc := proc.NewContainerProcess(config, *bundle)
+
+	// Apply overrides
+	containerProc.OverrideArgs(finalArgs)
+	if *hostname != "" {
+		containerProc.OverrideHostname(*hostname)
+	}
+
+	// Run the container
+	fmt.Println("Starting container...")
+	if err := containerProc.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Container execution failed: %v\n", err)
+		os.Exit(1)
+	}
 }
